@@ -1,0 +1,17 @@
+# Paths are resolved relative to the project root unless absolute.
+paths:
+  raw: data/raw
+  interim: data/interim
+  processed: data/processed
+  samples: data/samples
+
+ingest:
+  # Official Lichess puzzle export (CC0); see https://database.lichess.org/#puzzles
+  lichess_puzzle_url: https://database.lichess.org/lichess_db_puzzle.csv.zst
+  lichess_puzzle_filename: lichess_db_puzzle.csv.zst
+  download_chunk_size: 1048576
+  download_space_margin_bytes: 67108864
+
+analysis:
+  # Reserved for later stages (ingest, similarity, sequence search).
+  default_sample_rows: 10000
