@@ -1,3 +1,7 @@
-"""Chess utilities (stage 1 placeholder)."""
+"""Chess utilities built on python-chess."""
 
-__all__: list[str] = []
+from __future__ import annotations
+
+from chess_chain.chess.replay import PieceTracker, classify_terminal, derive_core
+
+__all__ = ["PieceTracker", "classify_terminal", "derive_core"]

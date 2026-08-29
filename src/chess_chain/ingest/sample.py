@@ -8,12 +8,9 @@ from pathlib import Path
 
 import zstandard as zstd
 
-logger = logging.getLogger(__name__)
+from chess_chain.domain.source import PUZZLE_HEADER
 
-PUZZLE_HEADER = (
-    "PuzzleId,FEN,Moves,Rating,RatingDeviation,Popularity,NbPlays,"
-    "Themes,GameUrl,OpeningTags,DailyDate\n"
-)
+logger = logging.getLogger(__name__)
 
 
 def stream_sample_rows(

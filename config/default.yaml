@@ -12,6 +12,16 @@ ingest:
   download_chunk_size: 1048576
   download_space_margin_bytes: 67108864
 
+  # Stage 2 ingestion pipeline settings.
+  # Number of source rows between checkpoints/log lines during `db ingest`.
+  ingest_batch_size: 50000
+  # Parquet row groups are flushed after this many buffered records.
+  parquet_row_group_rows: 65536
+  # Rating bucket partition width for `db ingest` (hive partition column).
+  rating_bucket_width: 100
+  # Bump when the derivation or schema changes so old outputs are invalidated.
+  transform_version: 1
+
 analysis:
   # Reserved for later stages (ingest, similarity, sequence search).
   default_sample_rows: 10000

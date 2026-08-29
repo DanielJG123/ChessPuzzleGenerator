@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     download_space_margin_bytes: int = 64 * 1024 * 1024  # 64 MiB safety margin
     default_sample_rows: int = 10_000
 
+    ingest_batch_size: int = 50_000
+    parquet_row_group_rows: int = 65_536
+    rating_bucket_width: int = 100
+    transform_version: int = 1
+
     @field_validator("project_root", mode="before")
     @classmethod
     def _resolve_project_root(cls, value: Any) -> Path:
@@ -81,6 +86,14 @@ class Settings(BaseSettings):
                 kwargs["download_chunk_size"] = ingest["download_chunk_size"]
             if "download_space_margin_bytes" in ingest:
                 kwargs["download_space_margin_bytes"] = ingest["download_space_margin_bytes"]
+            if "ingest_batch_size" in ingest:
+                kwargs["ingest_batch_size"] = int(ingest["ingest_batch_size"])
+            if "parquet_row_group_rows" in ingest:
+                kwargs["parquet_row_group_rows"] = int(ingest["parquet_row_group_rows"])
+            if "rating_bucket_width" in ingest:
+                kwargs["rating_bucket_width"] = int(ingest["rating_bucket_width"])
+            if "transform_version" in ingest:
+                kwargs["transform_version"] = int(ingest["transform_version"])
         if analysis:
             if "default_sample_rows" in analysis:
                 kwargs["default_sample_rows"] = int(analysis["default_sample_rows"])

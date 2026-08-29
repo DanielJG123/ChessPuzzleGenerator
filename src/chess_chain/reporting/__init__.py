@@ -1,3 +1,7 @@
-"""Reporting (planned)."""
+"""Reporting and data-quality outputs."""
 
-__all__: list[str] = []
+from __future__ import annotations
+
+from chess_chain.reporting.stats import compute_stats
+
+__all__ = ["compute_stats"]

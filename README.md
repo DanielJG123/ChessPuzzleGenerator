@@ -37,7 +37,7 @@ mypy src
 pytest
 ```
 
-Download the official Lichess puzzle export (large; ~200+ MB compressed):
+Download the official Lichess puzzle export (large; ~290 MB compressed):
 
 ```bash
 chess-chain db download
@@ -49,10 +49,32 @@ Create a small development sample (after download, or from any complete `.csv.zs
 chess-chain db sample --rows 10000
 ```
 
+Ingest the export into processed Parquet + DuckDB catalog (idempotent, resumable):
+
+```bash
+chess-chain db ingest --input data/raw/lichess_db_puzzle.csv.zst --output data/processed
+```
+
+Report data-quality statistics over the processed dataset:
+
+```bash
+chess-chain db stats
+```
+
 Override paths via `config/default.yaml` or environment variables prefixed with `CHESS_CHAIN_`.
 
-## Stage 1 scope
+## Implemented stages
 
-This stage sets up project structure, configuration, and an idempotent Lichess puzzle downloader with streamed sampling. Puzzle similarity, transitions, sequence search, and rating estimation are planned but not implemented yet.
+- **Stage 1:** project structure, configuration, and an idempotent Lichess
+  puzzle downloader with streamed sampling.
+- **Stage 2:** typed domain structures, python-chess replay of the source
+  convention (`presented_start = Board(FEN) after Moves[0]`,
+  `solution = Moves[1:]`), a streaming Parquet ingestion pipeline with
+  quarantine, stage-local piece identities, canonical fingerprints, DuckDB
+  catalog/repository, and a stats command.
 
-See `docs/architecture.md` for module boundaries and data layout.
+Puzzle similarity, transitions, sequence search and rating estimation are
+planned but not implemented yet.
+
+See `docs/architecture.md` for module boundaries, the data schema and the
+derived-field inventory.

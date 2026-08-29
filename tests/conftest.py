@@ -40,6 +40,75 @@ SAMPLE_ROWS = [
     ),
 ]
 
+# Crafted rows exercising captures, promotions, check and mate.
+CAPTURE_ROWS = [
+    (
+        "CAPT1,6k1/5ppp/8/8/8/8/8/6RK b - - 0 1,g8f8 g1g7,"
+        "1500,80,10,50,capture,https://lichess.org/xyz,\n"
+    ),
+]
+
+PROMOTION_ROWS = [
+    (
+        "PROM1,4k3/4P3/8/8/8/8/8/4K3 b - - 0 1,e8d7 e7e8q,"
+        "1500,80,10,50,promotion,https://lichess.org/xyz,\n"
+    ),
+]
+
+MATE_ROWS = [
+    (
+        "MATE1,6k1/6pp/8/8/8/8/8/5R1K b - - 0 1,g8h8 f1f8,"
+        "1500,80,10,50,mate,https://lichess.org/xyz,\n"
+    ),
+]
+
+CHECK_ROWS = [
+    (
+        "CHECK1,7k/8/8/8/8/8/8/R6K b - - 0 1,h8h7 a1a7,"
+        "1500,80,10,50,advantage,https://lichess.org/xyz,\n"
+    ),
+]
+
+# Rows that must be quarantined, with the reason substring to expect.
+BAD_ROWS: list[tuple[str, str]] = [
+    (
+        "BAD1,not-a-fen,e2e4,1500,80,10,50,mate,https://lichess.org/xyz,\n",
+        "malformed FEN",
+    ),
+    (
+        "BAD2,rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1,e2e5 e7e5,"
+        "1500,80,10,50,mate,https://lichess.org/xyz,\n",
+        "illegal preceding move",
+    ),
+    (
+        "BAD3,rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1,e2e4 e7e5 q6q6,"
+        "1500,80,10,50,mate,https://lichess.org/xyz,\n",
+        "malformed solution move",
+    ),
+    (
+        "BAD4,rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1,e2e4,"
+        "1500,80,10,50,mate,https://lichess.org/xyz,\n",
+        "no solution moves",
+    ),
+    (
+        "BAD5,x,y,z\n",
+        "expected at least 10 fields",
+    ),
+    (
+        "BAD6,rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1,e2e4 e7e5,"
+        "abc,80,10,50,mate,https://lichess.org/xyz,\n",
+        "non-numeric rating",
+    ),
+]
+
+
+def write_csv_zst(path: Path, rows: list[str], header: str = PUZZLE_HEADER) -> Path:
+    """Write ``rows`` (already including trailing newlines) as a .csv.zst file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (header + "".join(rows)).encode("utf-8")
+    path.write_bytes(zstd.ZstdCompressor().compress(payload))
+    return path
+
 
 @dataclass
 class MockHttpClient:
