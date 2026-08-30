@@ -25,3 +25,43 @@ ingest:
 analysis:
   # Reserved for later stages (ingest, similarity, sequence search).
   default_sample_rows: 10000
+
+  # Stage 3 analysis tiers. "cheap" needs no engine; "deep"/"variation"/
+  # "final_collision" may require an external UCI engine executable.
+  engine:
+    # Path to a Stockfish-compatible UCI executable. Empty string means "not
+    # configured": cheap analysis still works, engine tiers fail with a clear
+    # message. The binary is never vendored into the repository.
+    path: ""
+    threads: 1
+    hash_mb: 64
+    movetime_ms: 500
+    depth: null
+    nodes: null
+    multipv: 4
+
+  # Named forcedness thresholds (versioned: bump when the semantics change so
+  # cached deep analysis is invalidated).
+  forcedness:
+    version: 1
+    # Gap (centipawns) above which the intended move is "uniquely best".
+    unique_best_gap_cp: 50
+    # Gap above which every alternative is "decisively worse".
+    practically_forced_gap_cp: 200
+    # Score used to represent mate ("mate_value_cp - plies").
+    mate_value_cp: 10000
+    # Moves within this gap of the best move count as "plausible".
+    plausible_gap_cp: 30
+
+  # Bounded accepted-line enumeration for terminal-variation analysis.
+  variations:
+    default_max_plies: 8
+    default_max_nodes: 20000
+    default_acceptance: intended_only
+
+  # Lazy final-only occupancy-collision analysis.
+  collision:
+    analyser_version: 1
+    default_scope: up_to_plies
+    default_max_depth: 12
+    default_max_nodes: 100000

@@ -61,6 +61,17 @@ Report data-quality statistics over the processed dataset:
 chess-chain db stats
 ```
 
+Stage 3 chess analysis tiers (cheap needs no engine; deep needs a configured
+Stockfish-compatible UCI executable, see `config/default.yaml`):
+
+```bash
+chess-chain analyze cheap --where "rating >= 1800"
+chess-chain analyze deep --puzzle-id 00sHx
+chess-chain analyze variations --puzzle-id 00sHx --end-policy checkmate
+chess-chain analyze final-collision --puzzle-id 00sHx --scope up_to_plies
+chess-chain analyze summarize --puzzle-id 00sHx --include-collision
+```
+
 Override paths via `config/default.yaml` or environment variables prefixed with `CHESS_CHAIN_`.
 
 ## Implemented stages
@@ -72,9 +83,14 @@ Override paths via `config/default.yaml` or environment variables prefixed with 
   `solution = Moves[1:]`), a streaming Parquet ingestion pipeline with
   quarantine, stage-local piece identities, canonical fingerprints, DuckDB
   catalog/repository, and a stats command.
+- **Stage 3:** chess analysis tiers (cheap / deep / variation / final-collision),
+  per-ply forcedness and ambiguity records, versioned stage-end policies,
+  and a reusable final-only occupancy-collision analyser with a persistent
+  cache. The mechanical validator is only used once, on the final puzzle.
 
-Puzzle similarity, transitions, sequence search and rating estimation are
-planned but not implemented yet.
+Puzzle similarity, transition synthesis, sequence construction and rating
+estimation are planned but not implemented yet.
 
-See `docs/architecture.md` for module boundaries, the data schema and the
-derived-field inventory.
+See `docs/architecture.md` for module boundaries, the data schema, the
+derived-field inventory, stage-end policies and the bounded meaning of
+`collision_free_within_scope`.

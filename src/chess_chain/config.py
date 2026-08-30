@@ -55,6 +55,30 @@ class Settings(BaseSettings):
     rating_bucket_width: int = 100
     transform_version: int = 1
 
+    # Stage 3 analysis settings (versioned thresholds in config/default.yaml).
+    engine_path: str = ""
+    engine_threads: int = 1
+    engine_hash_mb: int = 64
+    engine_movetime_ms: int | None = None
+    engine_depth: int | None = None
+    engine_nodes: int | None = None
+    engine_multipv: int = 4
+
+    forcedness_version: int = 1
+    unique_best_gap_cp: int = 50
+    practically_forced_gap_cp: int = 200
+    mate_value_cp: int = 10_000
+    plausible_gap_cp: int = 30
+
+    variation_max_plies: int = 8
+    variation_max_nodes: int = 20_000
+    variation_acceptance: str = "intended_only"
+
+    collision_analyser_version: int = 1
+    collision_scope: str = "up_to_plies"
+    collision_max_depth: int = 12
+    collision_max_nodes: int = 100_000
+
     @field_validator("project_root", mode="before")
     @classmethod
     def _resolve_project_root(cls, value: Any) -> Path:
@@ -97,6 +121,54 @@ class Settings(BaseSettings):
         if analysis:
             if "default_sample_rows" in analysis:
                 kwargs["default_sample_rows"] = int(analysis["default_sample_rows"])
+            engine = analysis.get("engine", {})
+            if "path" in engine:
+                kwargs["engine_path"] = str(engine["path"])
+            if "threads" in engine:
+                kwargs["engine_threads"] = int(engine["threads"])
+            if "hash_mb" in engine:
+                kwargs["engine_hash_mb"] = int(engine["hash_mb"])
+            if "movetime_ms" in engine:
+                kwargs["engine_movetime_ms"] = (
+                    int(engine["movetime_ms"]) if engine["movetime_ms"] is not None else None
+                )
+            if "depth" in engine:
+                kwargs["engine_depth"] = (
+                    int(engine["depth"]) if engine["depth"] is not None else None
+                )
+            if "nodes" in engine:
+                kwargs["engine_nodes"] = (
+                    int(engine["nodes"]) if engine["nodes"] is not None else None
+                )
+            if "multipv" in engine:
+                kwargs["engine_multipv"] = int(engine["multipv"])
+            forcedness = analysis.get("forcedness", {})
+            if "version" in forcedness:
+                kwargs["forcedness_version"] = int(forcedness["version"])
+            if "unique_best_gap_cp" in forcedness:
+                kwargs["unique_best_gap_cp"] = int(forcedness["unique_best_gap_cp"])
+            if "practically_forced_gap_cp" in forcedness:
+                kwargs["practically_forced_gap_cp"] = int(forcedness["practically_forced_gap_cp"])
+            if "mate_value_cp" in forcedness:
+                kwargs["mate_value_cp"] = int(forcedness["mate_value_cp"])
+            if "plausible_gap_cp" in forcedness:
+                kwargs["plausible_gap_cp"] = int(forcedness["plausible_gap_cp"])
+            variations = analysis.get("variations", {})
+            if "default_max_plies" in variations:
+                kwargs["variation_max_plies"] = int(variations["default_max_plies"])
+            if "default_max_nodes" in variations:
+                kwargs["variation_max_nodes"] = int(variations["default_max_nodes"])
+            if "default_acceptance" in variations:
+                kwargs["variation_acceptance"] = str(variations["default_acceptance"])
+            collision = analysis.get("collision", {})
+            if "analyser_version" in collision:
+                kwargs["collision_analyser_version"] = int(collision["analyser_version"])
+            if "default_scope" in collision:
+                kwargs["collision_scope"] = str(collision["default_scope"])
+            if "default_max_depth" in collision:
+                kwargs["collision_max_depth"] = int(collision["default_max_depth"])
+            if "default_max_nodes" in collision:
+                kwargs["collision_max_nodes"] = int(collision["default_max_nodes"])
             kwargs["_analysis"] = analysis
         return cls(**kwargs)
 
@@ -122,6 +194,12 @@ class Settings(BaseSettings):
         return self.default_puzzle_path.with_suffix(
             self.default_puzzle_path.suffix + ".manifest.json"
         )
+
+    @property
+    def analysis_dir(self) -> Path:
+        processed = self.data_processed_dir
+        assert processed is not None
+        return (processed / "analysis").resolve()
 
 
 @lru_cache

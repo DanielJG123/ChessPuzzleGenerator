@@ -6,11 +6,66 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import chess
 import pytest
 import zstandard as zstd
 
+from chess_chain.analysis.engine import EngineAnalysisResult, EngineMoveInfo
 from chess_chain.config import Settings
 from chess_chain.ingest.sample import PUZZLE_HEADER
+
+
+def engine_fen(board: chess.Board) -> str:
+    return " ".join(board.fen().split()[:4])
+
+
+class FakeEngineAdapter:
+    """Deterministic UCI engine substitute for offline deep-analysis tests.
+
+    ``results`` maps an engine FEN to an ordered list of ``(uci, score_cp)``
+    tuples (best first); every ``analyze`` call is recorded in ``calls``.
+    """
+
+    def __init__(
+        self,
+        results: dict[str, list[tuple[str, int]]],
+        engine_name: str = "FakeStockfish",
+        engine_version: str = "0.1.0",
+        budget: str = '{"fake": true}',
+    ) -> None:
+        self.results = results
+        self.engine_name = engine_name
+        self.engine_version = engine_version
+        self.budget = budget
+        self.calls: list[str] = []
+
+    def engine_identity(self) -> tuple[str, str]:
+        return (self.engine_name, self.engine_version)
+
+    def analyze(
+        self,
+        board: chess.Board,
+        *,
+        multipv: int | None = None,
+        mate_value_cp: int = 10_000,
+    ) -> EngineAnalysisResult:
+        fen = engine_fen(board)
+        self.calls.append(fen)
+        moves = tuple(
+            EngineMoveInfo(uci=uci, score_cp=score_cp, score_mate=None, rank=rank)
+            for rank, (uci, score_cp) in enumerate(self.results.get(fen, []))
+        )
+        return EngineAnalysisResult(
+            fen=fen,
+            moves=moves,
+            engine_name=self.engine_name,
+            engine_version=self.engine_version,
+            budget=self.budget,
+        )
+
+    def close(self) -> None:
+        self.calls = []
+
 
 SAMPLE_ROWS = [
     (

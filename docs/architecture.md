@@ -109,6 +109,119 @@ silently accepted.
 - `chess-chain db stats` reports counts, quarantine reasons and distributions
   using SQL aggregation only.
 
+## Stage 3 (chess analysis, endpoint policies, final-only collision analysis)
+
+### Hardware model
+
+The mechanical occupied-square validator is used exactly once, on the final
+puzzle of a complete sequence, to open the box. Intermediate puzzles are not
+mechanically validated, so expensive unintended-occupancy collision analysis is
+only required for puzzles considered as the final stage. Intermediate stages
+instead need a reliable visible stopping rule (a stage-end policy). Because the
+physical player moves both colours, the stored Lichess principal line is not
+sufficient: every ply records forcedness and ambiguity information.
+
+### Special moves
+
+Castling, en passant and promotion are ordinary legal moves through
+python-chess (no duplicated rules, no blanket rejection). Their metadata is
+handled explicitly:
+
+- castling rights and the en-passant target can make visually identical piece
+  arrangements legally different (fingerprints include both);
+- castling moves two physical pieces (a four-square occupancy delta);
+- en passant removes a pawn from a square other than the destination;
+- promotion changes the required physical piece identity/inventory.
+
+Occupancy deltas are computed exactly per move (ordinary move: `{from}`
+removed; capture: only `{from}` removed, the destination stays occupied;
+castling: four squares change).
+
+### Analysis tiers
+
+1. `cheap` — pure python-chess structural analysis for all ingested puzzles
+   (legal/evasion counts, flags, occupancy deltas, `literal_forced`).
+2. `deep` — Stockfish MultiPV analysis for shortlisted puzzles, cached by the
+   canonical engine FEN plus a complete engine/configuration fingerprint.
+   Every result records the engine name/version and budget. The engine is an
+   external configured executable (path/threads/hash/nodes/depth/movetime/MultiPV
+   in config); it is never vendored.
+3. `variation` — bounded accepted-line enumeration and terminal-variation
+   analysis under a stage-end policy.
+4. `final_collision` — bounded unintended-occupancy search, invoked lazily only
+   for final-stage candidates.
+
+### Per-ply records and forcedness
+
+Each ply records whose move it is (solver/opponent), total legal moves, evasions
+when in check, whether the intended move is the only legal move, capture /
+recapture / check / forcing-check / castling / en-passant / promotion / mate
+flags, the exact occupancy delta, the engine rank and evaluation of the intended
+move, the gap to the second-best move, the number of plausible moves within the
+configured gap, and whether moves transpose to the same resulting position
+(always zero at a single ply in standard chess, recorded explicitly).
+
+Named forcedness categories (thresholds in versioned config):
+
+- `literal_forced` — exactly one legal move;
+- `unique_best` — intended move uniquely best by the configured gap;
+- `practically_forced` — alternatives exist but are all decisively worse;
+- `ambiguous` — multiple comparably strong moves;
+- `invalid_source_line` — intended move not acceptable under the reference
+  analysis (not scored or decisively worse).
+
+### Stage-end policies
+
+A versioned `StageEndPolicy` with metadata; no policy is chosen globally in
+code (a sequence may prefer checkmate endings while retaining the others for
+corpus coverage):
+
+- `CHECKMATE` — the stage ends at checkmate (clearest visible ending; knowing
+  mate is the objective may reduce difficulty).
+- `TRANSITION_READY` — the stage ends when the next visible transition's formal
+  precondition is uniquely true/executable; full verification is deferred to
+  stage 5.
+- `EXPLICIT_PREDICATE` — a printed condition ("when the black queen has been
+  captured") stored as a formal predicate plus rendered wording.
+- `FIXED_PLIES` — the player is told how many half-moves to play.
+
+Terminal-variation analysis enumerates accepted lines under an acceptance
+policy, applies them, and records exact terminal FENs and occupancy masks.
+Exact-position invariance and occupancy invariance are descriptive facts:
+intermediate candidates are not rejected because accepted endpoints differ in
+occupancy (later transition synthesis may normalise them into one next start).
+
+### Final-only occupancy-collision analysis
+
+`FinalOccupancyCollisionAnalyzer` verifies that all accepted final lines reach
+the same target occupancy mask, then searches for any legal non-accepted line
+that reaches that mask within a declared scope (`exact_plies`, `up_to_plies`,
+`plausible_horizon`), including earlier prefixes (the mechanism could open as
+soon as the mask appears). It uses transposition caching and safe pruning,
+records a witness line on collision, and reports `collision_found`,
+`collision_free_within_scope` or `inconclusive`.
+
+A bounded search never claims global impossibility: `collision_free_within_scope`
+means "no collision found within the declared depth/node/scope budget", nothing
+more. Results are persisted by a cache key that includes the puzzle/source
+version, presented-start fingerprint, target occupancy mask, accepted-line and
+stage-end policies, search scope, maximum depth/nodes, pruning configuration and
+the analyser algorithm version. This lets a later sequence generator rank final
+candidates, query the cache, analyse only uncached candidates, and stop when it
+has enough valid finalists.
+
+### CLI (`chess-chain analyze ...`)
+
+- `analyze cheap --where ...`
+- `analyze deep --puzzle-id ...`
+- `analyze variations --puzzle-id ... --end-policy ...`
+- `analyze final-collision --puzzle-id ... --scope ...`
+- `analyze summarize --puzzle-id ... [--include-collision]`
+
+Every expensive command prints an estimated scope before running and makes
+cache hits visible.
+
+
 
 ## Dataset provenance
 
@@ -127,32 +240,34 @@ silently accepted.
 |------|------|
 | `src/chess_chain/domain/` | Typed domain structures |
 | `src/chess_chain/chess/` | python-chess based replay/fingerprint logic |
+| `src/chess_chain/analysis/` | Stage-3 tiers: engine, forcedness, variations, collision |
 | `src/chess_chain/ingest/` | Downloader, streamed sampling, Parquet pipeline |
 | `src/chess_chain/storage/` | Manifests, schemas, DuckDB catalog and repository |
 | `src/chess_chain/reporting/` | Data-quality statistics |
 | `config/` | Default YAML settings |
 | `data/raw/` | Immutable downloaded sources |
 | `data/interim/` | Intermediate processing artefacts |
-| `data/processed/` | Parquet datasets, DuckDB catalog |
+| `data/processed/` | Parquet datasets, DuckDB catalog, analysis outputs |
 | `data/samples/` | Small streamed development subsets |
 | `tests/` | Offline unit, integration and property tests |
 | `docs/` | Project documentation |
 
 ## Module boundaries (implemented and planned)
 
-| Module | Stage 1 | Stage 2 | Later stages |
-|--------|---------|---------|--------------|
-| `cli` | `db download` / `db sample` | `db ingest` / `db stats` | Additional commands |
-| `config` | YAML + env settings | Ingest settings | Analysis parameters |
-| `domain` | Constraint documentation | Core types (stage 2) | Extended types |
-| `ingest` | Download and sampling | Replay + Parquet pipeline | Puzzle normalisation |
-| `chess` | — | Replay, fingerprints, material | Board helpers |
-| `storage` | Download manifests | Schemas, catalog, repository | More tables |
-| `similarity` | — | — | Puzzle similarity |
-| `transitions` | — | — | Transition generation |
-| `sequence` | — | — | Sequence search |
-| `rating` | — | — | Difficulty estimation |
-| `reporting` | — | Stats | Export and reports |
+| Module | Stage 1 | Stage 2 | Stage 3 | Later stages |
+|--------|---------|---------|---------|--------------|
+| `cli` | `db download` / `db sample` | `db ingest` / `db stats` | `analyze *` | Additional commands |
+| `config` | YAML + env settings | Ingest settings | Engine/forcedness settings | Analysis parameters |
+| `domain` | Constraint documentation | Core types | Analysis value types | Extended types |
+| `ingest` | Download and sampling | Replay + Parquet pipeline | — | Puzzle normalisation |
+| `chess` | — | Replay, fingerprints, material | — | Board helpers |
+| `storage` | Download manifests | Schemas, catalog, repository | — | More tables |
+| `analysis` | — | — | Engine tiers, policies, collision | Deep analysis reuse |
+| `similarity` | — | — | — | Puzzle similarity |
+| `transitions` | — | — | — | Transition generation |
+| `sequence` | — | — | — | Sequence search |
+| `rating` | — | — | — | Difficulty estimation |
+| `reporting` | — | Stats | Summaries | Export and reports |
 
 ## Configuration
 

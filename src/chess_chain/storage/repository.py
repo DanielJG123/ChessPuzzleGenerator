@@ -6,6 +6,9 @@ use the typed query methods instead of writing their own SQL.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import Any
+
 import duckdb
 import polars as pl
 
@@ -131,3 +134,43 @@ class PuzzleRepository:
         prefix = f"{position}_"
         conditions = [f"{prefix}{name} {operator} ?" for name in COUNT_NAMES]
         return self._select(conditions, list(signature.counts), limit=limit)
+
+    def count_where(self, where: str = "") -> int:
+        sql = "SELECT count(*) FROM puzzles"
+        if where:
+            sql += f" WHERE {where}"
+        row = self._con.execute(sql).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def stream_analysis_rows(
+        self,
+        where: str = "",
+        batch_size: int = 1000,
+    ) -> Iterator[tuple[Any, ...]]:
+        """Yield analysis rows (puzzle_id, source, transform_version, start_fen,
+        solution_uci, solver_colour, outcome) in bounded batches."""
+        sql = (
+            "SELECT puzzle_id, source, transform_version, start_fen, "
+            "solution_uci, solver_colour, outcome FROM puzzles"
+        )
+        if where:
+            sql += f" WHERE {where}"
+        cursor = self._con.execute(sql)
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+            yield from rows
+
+    def fetch_puzzle(self, puzzle_id: str) -> dict[str, Any] | None:
+        """Return one puzzle row as a dict (or None)."""
+        rows = self._con.execute(
+            "SELECT * FROM puzzles WHERE puzzle_id = ?", [puzzle_id]
+        ).fetchmany(1)
+        if not rows:
+            return None
+        columns = [column[0] for column in self._con.description]
+        return dict(zip(columns, rows[0], strict=True))
+
+    def close(self) -> None:
+        self._con.close()

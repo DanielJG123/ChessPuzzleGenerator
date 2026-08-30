@@ -98,6 +98,14 @@ class PartitionedParquetWriter:
     def close(self) -> None:
         for partition_value in list(self._buffers):
             self._flush(partition_value)
+        if not self._writers:
+            # Guarantee the dataset is readable even when empty: write one empty
+            # part file so readers can glob the hive-partitioned directory.
+            partition_dir = self.root / f"{self.partition_col}=0"
+            partition_dir.mkdir(parents=True, exist_ok=True)
+            path = partition_dir / "part-00000.parquet"
+            with pq.ParquetWriter(path, self.schema, compression="zstd") as writer:
+                writer.write_table(pa.Table.from_pylist([], schema=self.schema))
         for writer in self._writers.values():
             writer.close()
         self._writers.clear()
@@ -142,6 +150,12 @@ class PartFileWriter:
         if self._writer is not None:
             self._writer.close()
             self._writer = None
+        elif not any(self.directory.glob("part-*.parquet")):
+            # Guarantee readers can glob this directory even when no records
+            # were written (e.g. zero quarantined rows).
+            path = self.directory / "part-00000.parquet"
+            with pq.ParquetWriter(path, self._schema, compression="zstd") as writer:
+                writer.write_table(pa.Table.from_pylist([], schema=self._schema))
 
 
 @dataclass(frozen=True)
