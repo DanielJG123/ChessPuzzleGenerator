@@ -65,3 +65,73 @@ analysis:
     default_scope: up_to_plies
     default_max_depth: 12
     default_max_nodes: 100000
+
+# Stage 4 puzzle similarity organiser. Retrieval is bounded: candidates are
+# filtered by rating band and quality constraints, grouped by piece count and
+# material signature, queried by nearest occupancy mask within groups, and only
+# a shortlist receives the exact per-endpoint piece-assignment analysis.
+# Bump `version` whenever the semantics change so stale indexes are detected.
+similarity:
+  version: 1
+  # Backend used for nearest-occupancy queries: "exact" (NumPy bitwise_count)
+  # or "accelerated" (SciPy cdist over unpacked bits; optional, same results).
+  backend: exact
+  default_top_k: 50
+  # Product-quality constraints applied before grouping.
+  max_rating_deviation: 200
+  min_popularity: 0
+  # Candidate piece-count window around the source's available piece count.
+  piece_count_tolerance: 4
+  # Hard cap on the number of candidate rows scanned per query (bounded work).
+  max_candidates_scanned: 200000
+  # Occupancy-nearest shortlist multiplier (top_k * this) before exact scoring.
+  shortlist_multiplier: 4
+  # Product configuration: reject transitions that must establish non-visible
+  # castling/en-passant rights (the occupancy-only checker cannot verify them).
+  reject_non_visible_rights: false
+  # Exclude puzzles whose start material needs surplus pieces beyond a set.
+  exclude_unusual_material: false
+  # Conservative whole-board transformations, tried in this order. Every
+  # transformed candidate is reconstructed and validated with python-chess.
+  symmetries: [identity, file_reflection, rank_reflection, rot180]
+  # Cost weights inside the minimum-cost physical piece assignment.
+  cost_weights:
+    move: 1.0
+    add: 3.0
+    remove: 2.0
+  # Decomposable transition-complexity score weights (lower is better).
+  score_weights:
+    occupancy_best: 3.0
+    occupancy_mean: 1.5
+    occupancy_worst: 0.5
+    cost_best: 1.0
+    cost_mean: 0.5
+    cost_worst: 0.25
+    swap: 1.0
+    replace: 4.0
+    branch: 2.0
+    symmetry_non_identity: 3.0
+    rights_annotation: 5.0
+    inventory_invalid: 20.0
+
+# Stage 5 deterministic transition language and synthesiser. No LLM ever
+# invents executable transition instructions: a typed AST is executed and
+# verified, then rendered from templates. Bump `version` when semantics change.
+transition:
+  version: 1
+  # Bounded synthesis: at most this many actions per candidate program.
+  default_max_actions: 4
+  # Plausible-line generator used for anchor uncertainty and wrong states.
+  plausible_depth: 2
+  plausible_node_cap: 2000
+  # Minimum anchor uncertainty (bits) and number of independent anchors.
+  min_anchor_uncertainty_bits: 0.0
+  min_independent_anchors: 1
+  # Product configuration.
+  allow_absolute_square_fallback: true
+  allow_establish_rights: true
+  reject_collapsing_reveal: true
+  # Player-facing global rule (configurable, not assumed final).
+  global_rule_wording: >-
+    Continue choosing the strongest move for each side until checkmate occurs
+    or the stated transition condition becomes uniquely applicable.

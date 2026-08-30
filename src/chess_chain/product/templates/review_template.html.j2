@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sequence review - {{ product_id }}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem; color: #1a1a1a; background: #fafafa; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 2.5rem; border-bottom: 2px solid #ccc; padding-bottom: .2rem; }
+  h3 { font-size: 1rem; }
+  table { border-collapse: collapse; margin: .5rem 0; }
+  th, td { border: 1px solid #bbb; padding: .3rem .6rem; text-align: left; font-size: .9rem; }
+  .board { display: inline-block; margin: .4rem; vertical-align: top; }
+  .board svg { width: 320px; height: 320px; }
+  .board figcaption { font-size: .75rem; color: #555; max-width: 320px; }
+  .pass { color: #0a7a0a; font-weight: 600; }
+  .fail { color: #c00; font-weight: 600; }
+  .warn { color: #b57d00; }
+  .private { background: #fff3e0; border: 1px solid #e0b879; padding: .4rem .8rem; font-size: .8rem; }
+  .transition { background: #eef3fb; border-left: 4px solid #3a6ea5; padding: .4rem .8rem; margin: .6rem 0; }
+  .ast { font-family: ui-monospace, Consolas, monospace; font-size: .8rem; color: #333; }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: .85rem; }
+  a.anchor { color: #3a6ea5; text-decoration: none; }
+  textarea { width: 90%; height: 6rem; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<div class="private">PRIVATE developer/manual-review material. May reveal every solution.
+Never ship to players; <code>player_instructions.md</code> is the only player-safe artifact.</div>
+
+<h1>Sequence review - {{ product_id }}</h1>
+<p>
+  <strong>Product ID:</strong> <code>{{ product_id }}</code><br>
+  <strong>Sequence fingerprint:</strong> <code>{{ sequence_fingerprint }}</code><br>
+  <strong>Request fingerprint:</strong> <code>{{ request_fingerprint }}</code><br>
+  <strong>Random seed:</strong> <code>{{ seed }}</code><br>
+  <strong>Reproduce:</strong> <code>{{ reproduce_command }}</code><br>
+  <strong>Provisional difficulty:</strong> {{ estimate.label }} = <code>{{ estimate.value }}</code>
+  (provisional={{ estimate.provisional }}, method=<code>{{ estimate.method }}</code>, version={{ estimate.estimator_version }})
+</p>
+
+<p>Board orientation: {{ board_orientation }}</p>
+
+<h2>Sequence overview</h2>
+<table>
+  <thead><tr><th>Stage</th><th>Puzzle</th><th>Rating</th><th>Side</th><th>End policy</th><th>Transition</th><th>Final?</th></tr></thead>
+  <tbody>
+  {% for stage in stages %}
+    <tr>
+      <td><a class="anchor" href="#stage-{{ stage.index }}">{{ stage.index + 1 }}</a></td>
+      <td>{{ stage.puzzle_id }}</td>
+      <td>{{ stage.source_rating }}</td>
+      <td>{{ stage.side_to_move }}</td>
+      <td>{{ stage.end_policy_key }}<br><span class="mono">{{ stage.end_policy_wording }}</span></td>
+      <td>
+        {% if stage.transition_exact_journey is defined %}
+          {{ "exact journey" if stage.transition_exact_journey else stage.action_count ~ " action(s)" }}
+        {% else %}—{% endif %}
+      </td>
+      <td>{{ "yes" if stage.is_final else "" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+
+{% for stage in stages %}
+<hr>
+<h2 id="stage-{{ stage.index }}">Stage {{ stage.index + 1 }}: {{ stage.puzzle_id }}
+  {% if stage.is_final %}<span class="mono">(final)</span>{% endif %}</h2>
+<p>
+  Source rating: <code>{{ stage.source_rating }}</code> &middot;
+  Side to move: {{ stage.side_to_move }} &middot;
+  Start FEN: <code>{{ stage.start_fen }}</code>
+</p>
+
+<div class="board">
+  <figure>
+    {{ stage.start_svg | safe }}
+    <figcaption>Start position (stage {{ stage.index + 1 }})</figcaption>
+  </figure>
+</div>
+
+<h3>Intended solution replay</h3>
+<table>
+  <thead><tr><th>#</th><th>Side</th><th>SAN</th><th>UCI</th><th>Board after</th></tr></thead>
+  <tbody>
+  {% for ply in stage.plies %}
+    <tr>
+      <td>{{ ply.move_number }}</td>
+      <td>{{ ply.side }}</td>
+      <td><strong>{{ ply.san }}</strong></td>
+      <td><code>{{ ply.uci }}</code></td>
+      <td>
+        <div class="board">
+          <figure>
+            {{ ply.svg | safe }}
+            <figcaption>After {{ ply.uci }} - <code>{{ ply.fen }}</code></figcaption>
+          </figure>
+        </div>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if stage.accepted_alternatives %}
+<h3>Accepted alternative lines (separate from the intended line)</h3>
+<ul>
+{% for alt in stage.accepted_alternatives %}
+  <li>
+    <code>{{ alt.line | join(" ") }}</code> &rarr; <code>{{ alt.endpoint_fen }}</code>
+    <div class="board">
+      <figure>
+        {{ alt.endpoint_svg | safe }}
+        <figcaption>Accepted alternative endpoint</figcaption>
+      </figure>
+    </div>
+  </li>
+{% endfor %}
+</ul>
+{% endif %}
+
+<h3>Endpoints and stage boundary</h3>
+{% for svg in stage.endpoint_svgs %}
+  <div class="board"><figure>{{ svg | safe }}<figcaption>Accepted endpoint</figcaption></figure></div>
+{% endfor %}
+<p>
+  Stage-end policy: <code>{{ stage.end_policy_key }}</code> &middot;
+  wording: <span class="mono">{{ stage.end_policy_wording }}</span><br>
+  Guard (stored):
+  {% if stage.guard %}
+    passed={{ "true" if stage.guard.passed else "false" }},
+    accepted ready {{ stage.guard.accepted_ready }}/{{ stage.guard.accepted_total }},
+    disclosures: <code>{{ stage.guard.disclosures | tojson }}</code>
+  {% else %}not recorded{% endif %}
+</p>
+
+<h3>Forcedness per ply</h3>
+<table>
+  <thead><tr><th>ply</th><th>side</th><th>uci</th><th>legal moves</th><th>forced</th></tr></thead>
+  <tbody>
+  {% for record in stage.forcedness %}
+    <tr>
+      <td>{{ record.ply }}</td><td>{{ record.side }}</td>
+      <td><code>{{ record.uci }}</code></td>
+      <td>{{ record.legal_moves }}</td>
+      <td>{{ "yes" if record.forced else "no" }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if stage.clue %}
+<h3>Transition clue / leakage decomposition</h3>
+<table>
+  <thead><tr><th>component</th><th>value</th></tr></thead>
+  <tbody>
+  {% for key, value in stage.clue.items() %}
+    <tr><td><code>{{ key }}</code></td><td>{{ value }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if stage.transition_rendered is defined %}
+<h3>Transition (player-visible text) and private AST</h3>
+<div class="transition">
+  {{ stage.transition_rendered if stage.transition_rendered else "No changes needed - the position already matches the next puzzle." }}
+</div>
+<p class="ast">{{ stage.transition_ast_summary }}</p>
+<p>
+  actions={{ stage.action_count }} &middot; symmetry=<code>{{ stage.symmetry }}</code> &middot;
+  exact_journey={{ "true" if stage.transition_exact_journey else "false" }}<br>
+  verification_issues: {{ stage.verification_issues if stage.verification_issues else "none" }}
+</p>
+{% endif %}
+
+{% if stage.after_transition_fen is defined %}
+<h3>Transition before/after and next-stage start</h3>
+<div class="board">
+  <figure>
+    {{ stage.after_transition_svg | safe }}
+    <figcaption>Board after applying the transition ({{ stage.after_transition_fen }})</figcaption>
+  </figure>
+</div>
+<div class="board">
+  <figure>
+    {{ stage.next_start_svg | safe }}
+    <figcaption>Next stage start ({{ stage.next_start_fen }})</figcaption>
+  </figure>
+</div>
+<p>
+  Exact match:
+  {% if stage.exact_match %}<span class="pass">PASS</span>{% else %}<span class="fail">FAIL</span>{% endif %}
+</p>
+{% endif %}
+
+{% if stage.inventory_warning %}
+<p class="warn">Inventory warning: {{ stage.inventory_warning }}</p>
+{% endif %}
+
+{% if stage.is_final %}
+<h3>Final mechanical analysis (final stage only)</h3>
+<p>
+  Checkmate (python-chess):
+  {% if stage.final_checkmate %}<span class="pass">yes</span>{% else %}<span class="fail">no</span>{% endif %}<br>
+  Final occupied-square mask: <code>{{ stage.final_occupancy_mask }}</code><br>
+  Collision status: <code>{{ stage.final_collision_status }}</code>
+  (scope=<code>{{ stage.final_collision_scope }}</code>, max_depth={{ stage.final_collision_max_depth }},
+   cached={{ "true" if stage.final_collision_cached else "false" }})<br>
+  Collision witness:
+  {% if stage.final_collision_witness %}<code>{{ stage.final_collision_witness | join(" ") }}</code>
+  {% else %}none{% endif %}
+</p>
+{% endif %}
+{% endfor %}
+
+<h2>Review checklist</h2>
+<p>Reviewer notes are not persisted by any tool; copy them into
+<code>review_notes.yaml</code> manually if desired.</p>
+<textarea placeholder="Reviewer notes: stage issues, rejected transitions, suggested request/config changes..."></textarea>
+
+</body>
+</html>
+
+</table>

@@ -7,6 +7,10 @@ Source convention (see docs/architecture.md):
     presented_start = raw_board after preceding_move
     solution_moves  = Moves[1:]
     final_board     = presented_start after all solution_moves
+
+Castling moves (one UCI that moves king *and* rook) are tracked for both
+pieces so piece identities, moved/unmoved sets and final-checking identities
+stay consistent with the real final position.
 """
 
 from __future__ import annotations
@@ -20,7 +24,12 @@ from chess_chain.domain.position import CanonicalPosition
 from chess_chain.domain.puzzle import PuzzleCore
 from chess_chain.domain.source import SourcePuzzle
 
-__all__ = ["PieceTracker", "classify_terminal", "derive_core"]
+__all__ = [
+    "PieceTracker",
+    "castling_rook_squares",
+    "classify_terminal",
+    "derive_core",
+]
 
 
 def classify_terminal(board: chess.Board) -> tuple[str, bool, bool, bool]:
@@ -32,6 +41,29 @@ def classify_terminal(board: chess.Board) -> tuple[str, bool, bool, bool]:
     if board.is_check():
         return "check", True, False, False
     return "neither", False, False, False
+
+
+def castling_rook_squares(
+    board: chess.Board, move: chess.Move
+) -> tuple[chess.Square, chess.Square] | None:
+    """Return ``(rook_from, rook_to)`` when ``move`` castles, else ``None``.
+
+    A castling UCI moves two physical pieces at once (king plus rook); the
+    tracker must follow both. The rook squares are derived from the king's rank
+    and the castling side. Gating on ``generate_castling_moves`` (not the
+    pseudo-legal ``is_castling``) makes the helper rights-aware: an illegal
+    ``e1g1`` with only queenside rights is not castling. Lichess exports use the
+    standard ``e1g1``/``e1c1`` UCI encodings. Must be evaluated before ``push``
+    clears the castling rights.
+    """
+    if move not in board.generate_castling_moves():
+        return None
+    rank = chess.square_rank(move.from_square)
+    if board.is_kingside_castling(move):
+        # Rook h-file -> f-file on the king's rank.
+        return chess.square(7, rank), chess.square(5, rank)
+    # Queenside: rook a-file -> d-file on the king's rank.
+    return chess.square(0, rank), chess.square(3, rank)
 
 
 class PieceTracker:
@@ -135,6 +167,7 @@ def derive_core(source: SourcePuzzle) -> PuzzleCore:
             captured_type = captured_piece.piece_type
             captured_id = tracker.identity_at(capture_square, not moving_side)
 
+        castling = castling_rook_squares(raw_board, move)
         san = raw_board.san(move)
         raw_board.push(move)
         is_check = raw_board.is_check()
@@ -145,6 +178,11 @@ def derive_core(source: SourcePuzzle) -> PuzzleCore:
             captured_order.append(captured_id)
         tracker.move(moving_id, move.to_square)
         moved_ids.add(moving_id)
+        if castling is not None:
+            rook_from, rook_to = castling
+            rook_id = tracker.identity_at(rook_from, moving_side)
+            tracker.move(rook_id, rook_to)
+            moved_ids.add(rook_id)
         last_moved_id = moving_id
 
         if move.promotion is not None:

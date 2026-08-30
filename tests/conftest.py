@@ -124,6 +124,22 @@ CHECK_ROWS = [
     ),
 ]
 
+# Castling: one UCI moves king *and* rook, so the castled rook must be tracked.
+# ``090As`` is the real Lichess export row whose final ``e8g8`` previously
+# crashed ingest with ``KeyError: (False, 61)`` because the rook identity was
+# left on h8 while the real board had it on f8 delivering check.
+CASTLING_ROWS = [
+    (
+        "090As,4k2r/2qn2p1/1r2p3/p1P4p/Q3p1n1/B6P/P3B1P1/R4R1K w k - 1 26,"
+        "h3g4 h5g4 h1g1 c7h2 g1f2 e8g8,2789,76,97,64,advantage castling long,"
+        "https://lichess.org/x/black#34,\n"
+    ),
+    (
+        "CASTL2,4k3/8/8/8/8/8/8/R3K3 b Q - 0 1,e8d8 e1c1,"
+        "1500,80,10,50,advantage,https://lichess.org/xyz,\n"
+    ),
+]
+
 # Rows that must be quarantined, with the reason substring to expect.
 BAD_ROWS: list[tuple[str, str]] = [
     (

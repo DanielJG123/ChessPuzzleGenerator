@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,46 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_LICHESS_PUZZLE_URL = "https://database.lichess.org/lichess_db_puzzle.csv.zst"
 DEFAULT_PUZZLE_FILENAME = "lichess_db_puzzle.csv.zst"
+
+DEFAULT_GLOBAL_RULE = (
+    "Continue choosing the strongest move for each side until checkmate occurs "
+    "or the stated transition condition becomes uniquely applicable."
+)
+
+
+@dataclass(frozen=True)
+class TransitionConfig:
+    """Tunable knobs for transition synthesis / verification.
+
+    Defined here (not inside the ``transitions`` package) so ``Settings`` can
+    build it without triggering the package's heavier imports. The global rule
+    wording is configurable rather than assumed final.
+    """
+
+    version: int = 1
+    default_max_actions: int = 4
+    plausible_depth: int = 2
+    plausible_node_cap: int = 2000
+    min_anchor_uncertainty_bits: float = 0.0
+    min_independent_anchors: int = 1
+    allow_absolute_square_fallback: bool = True
+    allow_establish_rights: bool = True
+    reject_collapsing_reveal: bool = True
+    global_rule_wording: str = DEFAULT_GLOBAL_RULE
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "version": self.version,
+            "default_max_actions": self.default_max_actions,
+            "plausible_depth": self.plausible_depth,
+            "plausible_node_cap": self.plausible_node_cap,
+            "min_anchor_uncertainty_bits": self.min_anchor_uncertainty_bits,
+            "min_independent_anchors": self.min_independent_anchors,
+            "allow_absolute_square_fallback": self.allow_absolute_square_fallback,
+            "allow_establish_rights": self.allow_establish_rights,
+            "reject_collapsing_reveal": self.reject_collapsing_reveal,
+            "global_rule_wording": self.global_rule_wording,
+        }
 
 
 def _default_project_root() -> Path:
@@ -24,6 +65,19 @@ def _load_yaml_config(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle)
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _drop_env_override_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Remove YAML-derived kwargs that have a ``CHESS_CHAIN_<FIELD>`` env var.
+
+    Precedence (highest wins): CLI overrides > environment variables > user
+    YAML request file > checked-in defaults. Explicit init kwargs would
+    otherwise beat environment variables in pydantic-settings.
+    """
+    import os
+
+    overridden = {key for key in kwargs if f"CHESS_CHAIN_{key.upper()}" in os.environ}
+    return {key: value for key, value in kwargs.items() if key not in overridden}
 
 
 class Settings(BaseSettings):
@@ -78,6 +132,58 @@ class Settings(BaseSettings):
     collision_scope: str = "up_to_plies"
     collision_max_depth: int = 12
     collision_max_nodes: int = 100_000
+
+    # Stage 4 similarity settings (versioned thresholds in config/default.yaml).
+    similarity_version: int = 1
+    similarity_backend: str = "exact"
+    similarity_default_top_k: int = 50
+    similarity_max_rating_deviation: int = 200
+    similarity_min_popularity: int = 0
+    similarity_piece_count_tolerance: int = 4
+    similarity_max_candidates_scanned: int = 200_000
+    similarity_shortlist_multiplier: int = 4
+    similarity_reject_non_visible_rights: bool = False
+    similarity_exclude_unusual_material: bool = False
+    similarity_symmetries: tuple[str, ...] = (
+        "identity",
+        "file_reflection",
+        "rank_reflection",
+        "rot180",
+    )
+    similarity_score_weights: dict[str, float] = {
+        "occupancy_best": 3.0,
+        "occupancy_mean": 1.5,
+        "occupancy_worst": 0.5,
+        "cost_best": 1.0,
+        "cost_mean": 0.5,
+        "cost_worst": 0.25,
+        "swap": 1.0,
+        "replace": 4.0,
+        "branch": 2.0,
+        "symmetry_non_identity": 3.0,
+        "rights_annotation": 5.0,
+        "inventory_invalid": 20.0,
+    }
+    similarity_cost_weights: dict[str, float] = {
+        "move": 1.0,
+        "add": 3.0,
+        "remove": 2.0,
+    }
+
+    # Stage 5 transition settings (versioned thresholds in config/default.yaml).
+    transition_version: int = 1
+    transition_default_max_actions: int = 4
+    transition_plausible_depth: int = 2
+    transition_plausible_node_cap: int = 2000
+    transition_min_anchor_uncertainty_bits: float = 0.0
+    transition_min_independent_anchors: int = 1
+    transition_allow_absolute_square_fallback: bool = True
+    transition_allow_establish_rights: bool = True
+    transition_reject_collapsing_reveal: bool = True
+    transition_global_rule_wording: str = (
+        "Continue choosing the strongest move for each side until checkmate "
+        "occurs or the stated transition condition becomes uniquely applicable."
+    )
 
     @field_validator("project_root", mode="before")
     @classmethod
@@ -170,6 +276,84 @@ class Settings(BaseSettings):
             if "default_max_nodes" in collision:
                 kwargs["collision_max_nodes"] = int(collision["default_max_nodes"])
             kwargs["_analysis"] = analysis
+        similarity = yaml_data.get("similarity", {})
+        if similarity:
+            if "version" in similarity:
+                kwargs["similarity_version"] = int(similarity["version"])
+            if "backend" in similarity:
+                kwargs["similarity_backend"] = str(similarity["backend"])
+            if "default_top_k" in similarity:
+                kwargs["similarity_default_top_k"] = int(similarity["default_top_k"])
+            if "max_rating_deviation" in similarity:
+                kwargs["similarity_max_rating_deviation"] = int(similarity["max_rating_deviation"])
+            if "min_popularity" in similarity:
+                kwargs["similarity_min_popularity"] = int(similarity["min_popularity"])
+            if "piece_count_tolerance" in similarity:
+                kwargs["similarity_piece_count_tolerance"] = int(
+                    similarity["piece_count_tolerance"]
+                )
+            if "max_candidates_scanned" in similarity:
+                kwargs["similarity_max_candidates_scanned"] = int(
+                    similarity["max_candidates_scanned"]
+                )
+            if "shortlist_multiplier" in similarity:
+                kwargs["similarity_shortlist_multiplier"] = int(similarity["shortlist_multiplier"])
+            if "reject_non_visible_rights" in similarity:
+                kwargs["similarity_reject_non_visible_rights"] = bool(
+                    similarity["reject_non_visible_rights"]
+                )
+            if "exclude_unusual_material" in similarity:
+                kwargs["similarity_exclude_unusual_material"] = bool(
+                    similarity["exclude_unusual_material"]
+                )
+            if "symmetries" in similarity:
+                kwargs["similarity_symmetries"] = tuple(
+                    str(item) for item in similarity["symmetries"]
+                )
+            if "score_weights" in similarity:
+                kwargs["similarity_score_weights"] = {
+                    str(key): float(value) for key, value in similarity["score_weights"].items()
+                }
+            if "cost_weights" in similarity:
+                kwargs["similarity_cost_weights"] = {
+                    str(key): float(value) for key, value in similarity["cost_weights"].items()
+                }
+        transition = yaml_data.get("transition", {})
+        if transition:
+            if "version" in transition:
+                kwargs["transition_version"] = int(transition["version"])
+            if "default_max_actions" in transition:
+                kwargs["transition_default_max_actions"] = int(transition["default_max_actions"])
+            if "plausible_depth" in transition:
+                kwargs["transition_plausible_depth"] = int(transition["plausible_depth"])
+            if "plausible_node_cap" in transition:
+                kwargs["transition_plausible_node_cap"] = int(transition["plausible_node_cap"])
+            if "min_anchor_uncertainty_bits" in transition:
+                kwargs["transition_min_anchor_uncertainty_bits"] = float(
+                    transition["min_anchor_uncertainty_bits"]
+                )
+            if "min_independent_anchors" in transition:
+                kwargs["transition_min_independent_anchors"] = int(
+                    transition["min_independent_anchors"]
+                )
+            if "allow_absolute_square_fallback" in transition:
+                kwargs["transition_allow_absolute_square_fallback"] = bool(
+                    transition["allow_absolute_square_fallback"]
+                )
+            if "allow_establish_rights" in transition:
+                kwargs["transition_allow_establish_rights"] = bool(
+                    transition["allow_establish_rights"]
+                )
+            if "reject_collapsing_reveal" in transition:
+                kwargs["transition_reject_collapsing_reveal"] = bool(
+                    transition["reject_collapsing_reveal"]
+                )
+            if "global_rule_wording" in transition:
+                kwargs["transition_global_rule_wording"] = str(transition["global_rule_wording"])
+        # Explicit precedence: environment variables (machine-specific paths
+        # such as Stockfish) beat user YAML and checked-in defaults. CLI
+        # overrides are applied on top by the commands that support them.
+        kwargs = _drop_env_override_kwargs(kwargs)
         return cls(**kwargs)
 
     def model_post_init(self, __context: Any) -> None:
@@ -200,6 +384,29 @@ class Settings(BaseSettings):
         processed = self.data_processed_dir
         assert processed is not None
         return (processed / "analysis").resolve()
+
+    @property
+    def similarity_dir(self) -> Path:
+        return (self.analysis_dir / "similarity").resolve()
+
+    @property
+    def sequence_dir(self) -> Path:
+        return (self.analysis_dir / "sequence").resolve()
+
+    @property
+    def transition_config(self) -> TransitionConfig:
+        return TransitionConfig(
+            version=self.transition_version,
+            default_max_actions=self.transition_default_max_actions,
+            plausible_depth=self.transition_plausible_depth,
+            plausible_node_cap=self.transition_plausible_node_cap,
+            min_anchor_uncertainty_bits=self.transition_min_anchor_uncertainty_bits,
+            min_independent_anchors=self.transition_min_independent_anchors,
+            allow_absolute_square_fallback=self.transition_allow_absolute_square_fallback,
+            allow_establish_rights=self.transition_allow_establish_rights,
+            reject_collapsing_reveal=self.transition_reject_collapsing_reveal,
+            global_rule_wording=self.transition_global_rule_wording,
+        )
 
 
 @lru_cache

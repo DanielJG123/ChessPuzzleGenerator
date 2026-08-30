@@ -351,6 +351,28 @@ def ingest_puzzles(
                 quarantine_rows += 1
                 rows_processed += 1
                 continue
+            except Exception as exc:
+                # A single edge row must not abort a full-corpus run: record the
+                # failure visibly in the quarantine file (reason prefix marks it
+                # as an internal replay bug rather than a data rejection).
+                logger.warning(
+                    "replay error row %d (%s): %s: %s - quarantined",
+                    line_number,
+                    getattr(source, "puzzle_id", "?"),
+                    type(exc).__name__,
+                    exc,
+                )
+                quarantine_writer.add(
+                    quarantine_record(
+                        source_name=source_name,
+                        line_number=line_number,
+                        reason=f"internal_replay_error: {type(exc).__name__}: {exc}",
+                        fields=fields,
+                    )
+                )
+                quarantine_rows += 1
+                rows_processed += 1
+                continue
 
             record = core_to_record(
                 core,

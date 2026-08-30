@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from chess_chain.config import Settings
 from chess_chain.domain.pieces import MaterialSignature
 from chess_chain.ingest.pipeline import ingest_puzzles
@@ -12,6 +14,7 @@ from chess_chain.storage.repository import PuzzleRepository
 from tests.conftest import (
     BAD_ROWS,
     CAPTURE_ROWS,
+    CASTLING_ROWS,
     CHECK_ROWS,
     MATE_ROWS,
     PROMOTION_ROWS,
@@ -32,8 +35,12 @@ def _ingest_settings(project_root: Path) -> Settings:
 
 
 def _mixed_rows() -> list[str]:
-    valid = SAMPLE_ROWS + MATE_ROWS + CHECK_ROWS + CAPTURE_ROWS + PROMOTION_ROWS
+    valid = SAMPLE_ROWS + MATE_ROWS + CHECK_ROWS + CAPTURE_ROWS + PROMOTION_ROWS + CASTLING_ROWS
     return valid + [row for row, _ in BAD_ROWS]
+
+
+def _valid_row_count() -> int:
+    return len(SAMPLE_ROWS + MATE_ROWS + CHECK_ROWS + CAPTURE_ROWS + PROMOTION_ROWS + CASTLING_ROWS)
 
 
 def test_stream_to_parquet_and_duckdb_queries(project_root: Path) -> None:
@@ -44,7 +51,7 @@ def test_stream_to_parquet_and_duckdb_queries(project_root: Path) -> None:
 
     summary = ingest_puzzles(input_path=source, output_dir=processed, settings=settings)
     assert not summary.skipped
-    assert summary.puzzle_rows == 8
+    assert summary.puzzle_rows == _valid_row_count()
     assert summary.quarantine_rows == len(BAD_ROWS)
 
     dataset_dir = summary.dataset_dir
@@ -58,7 +65,7 @@ def test_stream_to_parquet_and_duckdb_queries(project_root: Path) -> None:
     con = ensure_catalog(processed)
     try:
         repo = PuzzleRepository(con)
-        assert repo.count() == 8
+        assert repo.count() == _valid_row_count()
         assert con.execute("SELECT count(*) FROM quarantined").fetchone()[0] == len(BAD_ROWS)
 
         # rating_bucket is a hive partition column.
@@ -66,8 +73,9 @@ def test_stream_to_parquet_and_duckdb_queries(project_root: Path) -> None:
         assert "rating_bucket" in columns
 
         assert repo.checkmate_status("checkmate").height == 2  # MATE1 + 00sHx
-        assert repo.checkmate_status("check").height == 3  # CHECK1 + 00sJ9 + PROM1
-        assert repo.rating_range(min_rating=1490, max_rating=1510).height == 4
+        # CHECK1 + 00sJ9 + PROM1 + 090As (castled rook delivers check) + CASTL2
+        assert repo.checkmate_status("check").height == 5
+        assert repo.rating_range(min_rating=1490, max_rating=1510).height == 5
         assert repo.play_count(min_plays=100).height >= 1  # 00sJ9 has 325 plays
         assert repo.theme("capture").height == 1
         assert repo.line_length(min_plies=3, max_plies=3).height >= 1
@@ -77,10 +85,19 @@ def test_stream_to_parquet_and_duckdb_queries(project_root: Path) -> None:
         )
         assert promo == ["PROM1"]
 
-        # CHECK1 starts with exactly rook+king vs king; several other rows are supersets.
+        # 090As castles on its final ply: the h8 rook must be recorded as moved,
+        # not left in the unmoved set (regression for the ingest KeyError).
+        unmoved = (
+            repo.query("SELECT unmoved_piece_ids FROM puzzles WHERE puzzle_id = '090As'")
+            .to_series()
+            .to_list()[0]
+        )
+        assert "brh8" not in unmoved
+
+        # CHECK1 and CASTL2 start with exactly rook+king vs king; other rows are supersets.
         sig = MaterialSignature.from_counts(wr=1, wk=1, bk=1)
-        assert repo.material(sig, position="start", mode="equal").height == 1
-        assert repo.material(sig, position="start", mode="superset").height == 6
+        assert repo.material(sig, position="start", mode="equal").height == 2
+        assert repo.material(sig, position="start", mode="superset").height == 8
     finally:
         con.close()
 
@@ -98,5 +115,38 @@ def test_quarantine_reasons_are_recorded(project_root: Path) -> None:
         reason_text = " ".join(row[0] for row in reasons)
         for _, expected in BAD_ROWS:
             assert expected in reason_text
+    finally:
+        con.close()
+
+
+def test_unexpected_replay_error_is_quarantined_not_fatal(
+    project_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single edge row must not abort a full-corpus ingest run."""
+    import chess_chain.ingest.pipeline as pipeline_mod
+
+    source = write_csv_zst(project_root / "in.csv.zst", list(SAMPLE_ROWS))
+    settings = _ingest_settings(project_root)
+    real_derive = pipeline_mod.derive_core
+
+    def flaky_derive(source_puzzle):
+        if source_puzzle.puzzle_id == "00sHx":
+            raise RuntimeError("simulated replay bug")
+        return real_derive(source_puzzle)
+
+    monkeypatch.setattr(pipeline_mod, "derive_core", flaky_derive)
+    processed = settings.data_processed_dir
+    assert processed is not None
+
+    summary = ingest_puzzles(input_path=source, output_dir=processed, settings=settings)
+    assert summary.puzzle_rows == len(SAMPLE_ROWS) - 1
+    assert summary.quarantine_rows == 1
+
+    con = ensure_catalog(processed)
+    try:
+        reason = con.execute("SELECT reason FROM quarantined").fetchone()[0]
+        assert "internal_replay_error" in reason
+        assert "RuntimeError" in reason
+        assert "simulated replay bug" in reason
     finally:
         con.close()

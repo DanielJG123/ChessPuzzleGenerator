@@ -162,6 +162,40 @@ class PuzzleRepository:
                 break
             yield from rows
 
+    def stream_similarity_rows(
+        self,
+        where: str = "",
+        batch_size: int = 1000,
+    ) -> Iterator[tuple[Any, ...]]:
+        """Yield similarity-index rows (identity, rating/quality fields, start
+        material and start-state fields) in bounded batches."""
+        count_columns = ", ".join(f"start_{name}" for name in COUNT_NAMES)
+        sql = (
+            "SELECT puzzle_id, source, transform_version, rating, rating_deviation, "
+            "popularity, nb_plays, start_fen, presented_piece_count, start_occupancy, "
+            f"start_castling, start_ep_square, {count_columns}, "
+            "duplicate_queens, unusual_material FROM puzzles"
+        )
+        if where:
+            sql += f" WHERE {where}"
+        cursor = self._con.execute(sql)
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+            yield from rows
+
+    def active_dataset_fingerprint(self) -> tuple[str, str, int]:
+        """Return ``(dataset_name, source_fingerprint, transform_version)`` of
+        the active dataset, or empty strings / 0 when none is active."""
+        row = self._con.execute(
+            "SELECT dataset_name, source_fingerprint, transform_version "
+            "FROM datasets WHERE is_active"
+        ).fetchone()
+        if row is None:
+            return ("", "", 0)
+        return (str(row[0]), str(row[1]), int(row[2]))
+
     def fetch_puzzle(self, puzzle_id: str) -> dict[str, Any] | None:
         """Return one puzzle row as a dict (or None)."""
         rows = self._con.execute(

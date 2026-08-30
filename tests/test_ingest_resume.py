@@ -11,6 +11,7 @@ from chess_chain.ingest.pipeline import ingest_puzzles
 from tests.conftest import (
     BAD_ROWS,
     CAPTURE_ROWS,
+    CASTLING_ROWS,
     CHECK_ROWS,
     MATE_ROWS,
     PROMOTION_ROWS,
@@ -31,7 +32,7 @@ def _ingest_settings(project_root: Path) -> Settings:
 
 
 def _mixed_rows() -> list[str]:
-    valid = SAMPLE_ROWS + MATE_ROWS + CHECK_ROWS + CAPTURE_ROWS + PROMOTION_ROWS
+    valid = SAMPLE_ROWS + MATE_ROWS + CHECK_ROWS + CAPTURE_ROWS + PROMOTION_ROWS + CASTLING_ROWS
     return valid + [row for row, _ in BAD_ROWS]
 
 
@@ -59,17 +60,20 @@ def test_partial_outputs_are_unmistakable_and_resume_works(project_root: Path, m
     processed = settings.data_processed_dir
     assert processed is not None
 
+    # Crash after the 5th record is converted. derive_core failures are now
+    # quarantined per-row, so the fatal crash is simulated one stage later
+    # (inside core_to_record, outside the per-row quarantine boundary).
     state = {"fail_after": 5}
-    real_derive = pipeline.derive_core
+    real_to_record = pipeline.core_to_record
 
-    def flaky_derive(source):
+    def flaky_record(core, **kwargs):
         if state["fail_after"] > 0:
             state["fail_after"] -= 1
             if state["fail_after"] == 0:
                 raise RuntimeError("simulated crash")
-        return real_derive(source)
+        return real_to_record(core, **kwargs)
 
-    monkeypatch.setattr(pipeline, "derive_core", flaky_derive)
+    monkeypatch.setattr(pipeline, "core_to_record", flaky_record)
 
     with pytest.raises(RuntimeError, match="simulated crash"):
         ingest_puzzles(input_path=source, output_dir=processed, settings=settings)
@@ -81,12 +85,12 @@ def test_partial_outputs_are_unmistakable_and_resume_works(project_root: Path, m
     assert not any(processed.glob("*_v*/_SUCCESS"))
 
     # Resume: no more failures; the dataset completes.
-    monkeypatch.setattr(pipeline, "derive_core", real_derive)
+    monkeypatch.setattr(pipeline, "core_to_record", real_to_record)
     summary = ingest_puzzles(
         input_path=source, output_dir=processed, settings=settings, resume=True
     )
     assert not summary.skipped
-    assert summary.puzzle_rows == 8
+    assert summary.puzzle_rows == 10
     assert summary.quarantine_rows == len(BAD_ROWS)
     assert (summary.dataset_dir / "_SUCCESS").is_file()
     assert not list(processed.glob(".staging-*"))

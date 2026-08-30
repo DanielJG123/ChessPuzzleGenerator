@@ -5,12 +5,18 @@ from __future__ import annotations
 import chess
 import pytest
 
-from chess_chain.chess.replay import classify_terminal, derive_core
+from chess_chain.chess.replay import (
+    castling_rook_squares,
+    classify_terminal,
+    derive_core,
+)
 from chess_chain.domain.errors import IngestRejectError
+from chess_chain.domain.pieces import StagePieceId
 from chess_chain.domain.source import source_from_fields
 from tests.conftest import (
     BAD_ROWS,
     CAPTURE_ROWS,
+    CASTLING_ROWS,
     CHECK_ROWS,
     MATE_ROWS,
     PROMOTION_ROWS,
@@ -112,6 +118,61 @@ def test_fingerprint_and_occupancy() -> None:
     assert start_fp.bitboards[0] == int(core.presented_start.board.pieces(chess.PAWN, chess.WHITE))
     # Occupancy is the union of the 12 colour/piece bitboards.
     assert start_fp.occupied == sum(start_fp.bitboards)
+
+
+def test_castling_fixture_tracks_rook_identity() -> None:
+    # Real Lichess export row 090As: the final ply e8g8 is black kingside
+    # castling; the castled rook lands on f8 and delivers the check. Before the
+    # fix the rook identity was left on h8 and derive_core crashed with
+    # ``KeyError: (False, 61)`` when computing final_checking_ids.
+    core = derive_core(_parse(CASTLING_ROWS[0]))
+    last = core.events[-1]
+    assert last.uci == "e8g8"
+    assert last.san == "O-O+"  # castling that delivers check
+    assert last.moving_piece_id.key() == "bke8"
+    rook = StagePieceId(chess.BLACK, chess.ROOK, chess.H8)
+    assert core.final_position.board.piece_at(chess.F8) == chess.Piece(chess.ROOK, chess.BLACK)
+    assert rook.key() == "brh8"
+    # The rook genuinely moved: tracked at f8, recorded as moved, and it is the
+    # piece that gives the final check.
+    assert rook in core.moved_ids
+    assert rook not in core.unmoved_ids
+    assert core.is_check
+    assert core.final_checking_ids == {rook}
+
+
+def test_queenside_castling_fixture() -> None:
+    # White queenside castling in the solution: king e1 -> c1, rook a1 -> d1.
+    core = derive_core(_parse(CASTLING_ROWS[1]))
+    event = core.events[0]
+    assert event.uci == "e1c1"
+    assert event.san == "O-O-O+"  # the castled rook gives check on d1
+    assert event.moving_piece_id.key() == "wke1"
+    rook = StagePieceId(chess.WHITE, chess.ROOK, chess.A1)
+    assert core.final_position.board.piece_at(chess.D1) == chess.Piece(chess.ROOK, chess.WHITE)
+    assert rook in core.moved_ids
+    assert core.is_check
+    assert core.final_checking_ids == {rook}
+
+
+def test_castling_rook_squares_helper() -> None:
+    board = chess.Board("4k3/8/8/8/8/8/8/R3K3 w Q - 0 1")
+    kingside = chess.Move.from_uci("e1g1")
+    # Only queenside rights exist, so a kingside king move is not castling.
+    no_rights = chess.Board("4k3/8/8/8/8/8/8/R3K3 w - - 0 1")
+    assert castling_rook_squares(board, kingside) is None
+    queenside = chess.Move.from_uci("e1c1")
+    assert castling_rook_squares(board, queenside) == (chess.A1, chess.D1)
+    assert castling_rook_squares(no_rights, queenside) is None
+    # The king-takes-rook UCI form is not emitted by generate_castling_moves in
+    # standard mode (Lichess exports e1c1/e1g1), so it is not castling here.
+    assert castling_rook_squares(board, chess.Move.from_uci("e1a1")) is None
+    black_board = chess.Board("4k2r/8/8/8/8/8/8/R3K3 b k - 0 1")
+    assert castling_rook_squares(black_board, chess.Move.from_uci("e8g8")) == (
+        chess.H8,
+        chess.F8,
+    )
+    assert castling_rook_squares(black_board, chess.Move.from_uci("e8c8")) is None
 
 
 def test_bad_rows_are_rejected_with_reason() -> None:
